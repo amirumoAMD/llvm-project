@@ -104,6 +104,7 @@
 #include "llvm/Support/Locale.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/SaveAndRestore.h"
+#include "llvm/Support/TextEncoding.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/TargetParser/RISCVTargetParser.h"
 #include "llvm/TargetParser/Triple.h"
@@ -945,7 +946,8 @@ public:
 
   bool HandlePrintfSpecifier(const analyze_printf::PrintfSpecifier &FS,
                              const char *, unsigned SpecifierLen,
-                             const TargetInfo &) override {
+                             const TargetInfo &,
+                             const llvm::TextEncodingConverter &) override {
 
     const size_t FieldWidth = computeFieldWidth(FS);
     const size_t Precision = computePrecision(FS);
@@ -8352,10 +8354,11 @@ public:
                        ArrayRef<FixItHint> Fixit = {});
 
 protected:
-  bool HandleInvalidConversionSpecifier(unsigned argIndex, SourceLocation Loc,
-                                        const char *startSpec,
-                                        unsigned specifierLen,
-                                        const char *csStart, unsigned csLen);
+  bool
+  HandleInvalidConversionSpecifier(unsigned argIndex, SourceLocation Loc,
+                                   const char *startSpec, unsigned specifierLen,
+                                   const char *csStart, unsigned csLen,
+                                   const llvm::TextEncodingConverter &Conv);
 
   void HandlePositionalNonpositionalArgs(SourceLocation Loc,
                                          const char *startSpec,
@@ -8602,7 +8605,8 @@ void UncoveredArgHandler::Diagnose(Sema &S, bool IsFunctionCall,
 
 bool CheckFormatHandler::HandleInvalidConversionSpecifier(
     unsigned argIndex, SourceLocation Loc, const char *startSpec,
-    unsigned specifierLen, const char *csStart, unsigned csLen) {
+    unsigned specifierLen, const char *csStart, unsigned csLen,
+    const llvm::TextEncodingConverter &Conv) {
   bool keepGoing = true;
   if (argIndex < NumDataArgs) {
     // Consider the argument coverered, even though the specifier doesn't
@@ -8617,7 +8621,15 @@ bool CheckFormatHandler::HandleInvalidConversionSpecifier(
     keepGoing = false;
   }
 
-  StringRef Specifier(csStart, csLen);
+  // The csStart points to a character that has already been converted to the
+  // exec charset, so we have to reverse the conversion to allow diagnostic
+  // message to match an expected value when using -verify option,
+  SmallString<4> RS;
+  auto EC = Conv.convert(StringRef(csStart, csLen), RS);
+  if (EC) {
+    keepGoing = false;
+  }
+  llvm::StringRef Specifier(RS);
 
   // If the specifier in non-printable, it could be the first byte of a UTF-8
   // sequence. In that case, print the UTF-8 code point. If not, print the byte
@@ -8771,13 +8783,14 @@ public:
 
   bool HandleInvalidPrintfConversionSpecifier(
       const analyze_printf::PrintfSpecifier &FS, const char *startSpecifier,
-      unsigned specifierLen) override;
+      unsigned specifierLen, const llvm::TextEncodingConverter &Conv) override;
 
   void handleInvalidMaskType(StringRef MaskType) override;
 
   bool HandlePrintfSpecifier(const analyze_printf::PrintfSpecifier &FS,
                              const char *startSpecifier, unsigned specifierLen,
-                             const TargetInfo &Target) override;
+                             const TargetInfo &Target,
+                             const llvm::TextEncodingConverter &Conv) override;
   bool checkFormatExpr(const analyze_printf::PrintfSpecifier &FS,
                        const char *StartSpecifier, unsigned SpecifierLen,
                        const Expr *E);
@@ -8901,23 +8914,24 @@ public:
                 FormatStringType type, bool IsObjC, bool InFunctionCall,
                 llvm::SmallVectorImpl<EquatableFormatArgument> &Args);
 
-  virtual bool HandlePrintfSpecifier(const analyze_printf::PrintfSpecifier &FS,
-                                     const char *startSpecifier,
-                                     unsigned specifierLen,
-                                     const TargetInfo &Target) override;
+  virtual bool
+  HandlePrintfSpecifier(const analyze_printf::PrintfSpecifier &FS,
+                        const char *startSpecifier, unsigned specifierLen,
+                        const TargetInfo &Target,
+                        const llvm::TextEncodingConverter &Conv) override;
 };
 
 } // namespace
 
 bool CheckPrintfHandler::HandleInvalidPrintfConversionSpecifier(
     const analyze_printf::PrintfSpecifier &FS, const char *startSpecifier,
-    unsigned specifierLen) {
+    unsigned specifierLen, const llvm::TextEncodingConverter &Conv) {
   const analyze_printf::PrintfConversionSpecifier &CS =
       FS.getConversionSpecifier();
 
   return HandleInvalidConversionSpecifier(
       FS.getArgIndex(), getLocationOfByte(CS.getStart()), startSpecifier,
-      specifierLen, CS.getStart(), CS.getLength());
+      specifierLen, CS.getStart(), CS.getLength(), Conv);
 }
 
 void CheckPrintfHandler::handleInvalidMaskType(StringRef MaskType) {
@@ -9180,9 +9194,10 @@ bool DecomposePrintfHandler::GetSpecifiers(
 
 bool DecomposePrintfHandler::HandlePrintfSpecifier(
     const analyze_printf::PrintfSpecifier &FS, const char *startSpecifier,
-    unsigned specifierLen, const TargetInfo &Target) {
+    unsigned specifierLen, const TargetInfo &Target,
+    const llvm::TextEncodingConverter &Conv) {
   if (!CheckPrintfHandler::HandlePrintfSpecifier(FS, startSpecifier,
-                                                 specifierLen, Target)) {
+                                                 specifierLen, Target, Conv)) {
     HadError = true;
     return false;
   }
@@ -9339,7 +9354,8 @@ bool CheckPrintfHandler::checkForCStrMembers(
 
 bool CheckPrintfHandler::HandlePrintfSpecifier(
     const analyze_printf::PrintfSpecifier &FS, const char *startSpecifier,
-    unsigned specifierLen, const TargetInfo &Target) {
+    unsigned specifierLen, const TargetInfo &Target,
+    const llvm::TextEncodingConverter &Conv) {
   using namespace analyze_format_string;
   using namespace analyze_printf;
 
@@ -9426,14 +9442,14 @@ bool CheckPrintfHandler::HandlePrintfSpecifier(
   // in a non-ObjC literal.
   if (!allowsObjCArg() && CS.isObjCArg()) {
     return HandleInvalidPrintfConversionSpecifier(FS, startSpecifier,
-                                                  specifierLen);
+                                                  specifierLen, Conv);
   }
 
   // %P can only be used with os_log.
   if (FSType != FormatStringType::OSLog &&
       CS.getKind() == ConversionSpecifier::PArg) {
     return HandleInvalidPrintfConversionSpecifier(FS, startSpecifier,
-                                                  specifierLen);
+                                                  specifierLen, Conv);
   }
 
   // %n is not allowed with os_log.
@@ -9453,7 +9469,7 @@ bool CheckPrintfHandler::HandlePrintfSpecifier(
        CS.getKind() == ConversionSpecifier::sArg ||
        CS.getKind() == ConversionSpecifier::ObjCObjArg)) {
     return HandleInvalidPrintfConversionSpecifier(FS, startSpecifier,
-                                                  specifierLen);
+                                                  specifierLen, Conv);
   }
 
   // Check for use of public/private annotation outside of os_log().
@@ -10129,10 +10145,9 @@ public:
                             const char *startSpecifier,
                             unsigned specifierLen) override;
 
-  bool
-  HandleInvalidScanfConversionSpecifier(const analyze_scanf::ScanfSpecifier &FS,
-                                        const char *startSpecifier,
-                                        unsigned specifierLen) override;
+  bool HandleInvalidScanfConversionSpecifier(
+      const analyze_scanf::ScanfSpecifier &FS, const char *startSpecifier,
+      unsigned specifierLen, const llvm::TextEncodingConverter &Conv) override;
 
   void HandleIncompleteScanList(const char *start, const char *end) override;
 };
@@ -10148,13 +10163,14 @@ void CheckScanfHandler::HandleIncompleteScanList(const char *start,
 
 bool CheckScanfHandler::HandleInvalidScanfConversionSpecifier(
     const analyze_scanf::ScanfSpecifier &FS, const char *startSpecifier,
-    unsigned specifierLen) {
+    unsigned specifierLen, const llvm::TextEncodingConverter &Conv) {
+
   const analyze_scanf::ScanfConversionSpecifier &CS =
       FS.getConversionSpecifier();
 
   return HandleInvalidConversionSpecifier(
       FS.getArgIndex(), getLocationOfByte(CS.getStart()), startSpecifier,
-      specifierLen, CS.getStart(), CS.getLength());
+      specifierLen, CS.getStart(), CS.getLength(), Conv);
 }
 
 bool CheckScanfHandler::HandleScanfSpecifier(

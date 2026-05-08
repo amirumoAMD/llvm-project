@@ -17,10 +17,32 @@
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/FormatString.h"
 #include "clang/AST/Type.h"
+#include "clang/Basic/TargetInfo.h"
+#include "llvm/Support/TextEncoding.h"
+
+namespace llvm {
+class TextEncodingConverter;
+}
 
 namespace clang {
 
 class LangOptions;
+
+/// Creates a TextEncodingConverter for format string character comparisons.
+/// On z/OS format strings are IBM-1047 encoded, so each byte must be converted
+/// to UTF-8 before comparing against ASCII specifier characters.
+/// On all other targets a no-op converter is returned.
+/// Create this once per format string parse and pass it through.
+inline llvm::TextEncodingConverter
+makeFormatStrConverter(const TargetInfo &Target) {
+  auto MaybeConverter =
+      Target.getTriple().isOSzOS()
+          ? llvm::TextEncodingConverter::create(llvm::TextEncoding::IBM1047,
+                                                llvm::TextEncoding::UTF8)
+          : llvm::TextEncodingConverter::createNoopConverter();
+  assert(MaybeConverter && "Failed to create format string converter");
+  return std::move(*MaybeConverter);
+}
 
 template <typename T> class UpdateOnReturn {
   T &ValueToUpdate;
@@ -38,8 +60,10 @@ namespace analyze_format_string {
 class FormatStringParser {
 protected:
   FormatStringParser(FormatStringHandler &H, const LangOptions &LO,
-                     const TargetInfo &Target, bool IsScanf)
-      : H(H), LO(LO), Target(Target), IsScanf(IsScanf) {}
+                     const TargetInfo &Target, bool IsScanf,
+                     const llvm::TextEncodingConverter &Conv)
+      : H(H), LO(LO), Target(Target), IsScanf(IsScanf),
+        FormatStrConverter(Conv) {}
 
   OptionalAmount parseAmount(const char *&Beg, const char *E) const;
 
@@ -73,6 +97,7 @@ protected:
   const LangOptions &LO;
   const TargetInfo &Target;
   bool IsScanf;
+  const llvm::TextEncodingConverter &FormatStrConverter;
 
 private:
   bool parseWidthModifier(const char *&I, const char *E, unsigned &BitWidth,
