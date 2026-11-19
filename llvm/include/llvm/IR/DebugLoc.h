@@ -26,6 +26,7 @@ class LLVMContext;
 class raw_ostream;
 class DILocation;
 class Function;
+class ModuleSlotTracker;
 
 #if LLVM_ENABLE_DEBUGLOC_TRACKING_COVERAGE
 #if LLVM_ENABLE_DEBUGLOC_TRACKING_ORIGIN
@@ -298,6 +299,10 @@ struct FLDebugLoc {
       return true;
     return Context->isValidSrcLoc(SrcLocIdx, InlinedAtIdx);
   }
+
+  LLVM_ABI void printAsOperand(raw_ostream &OS) const;
+  LLVM_ABI void printAsOperand(raw_ostream &OS, const Function *F,
+                               ModuleSlotTracker &MST) const;
 };
 
 inline hash_code hash_value(const FLDebugLoc &Val) {
@@ -494,6 +499,16 @@ public:
 
   /// prints source location /path/to/file.exe:line:col @[inlined at]
   LLVM_ABI void print(raw_ostream &OS) const;
+
+  /// Similar to the Metadata::printAsOperand function, but requires a non-null
+  /// Function pointer; if this is not available, then use get()->printAsOperand
+  /// instead.
+  LLVM_ABI void printAsOperand(raw_ostream &OS, const Function *F) const;
+  /// Similar to the Metadata::printAsOperand function, but requires a non-null
+  /// Function pointer; if this is not available, then use get()->printAsOperand
+  /// instead.
+  LLVM_ABI void printAsOperand(raw_ostream &OS, ModuleSlotTracker &MST,
+                               const Function *F) const;
 };
 
 } // end namespace llvm
