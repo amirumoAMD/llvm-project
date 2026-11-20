@@ -173,7 +173,7 @@ private:
   unsigned DebugInstrNum;
 
   /// One-based handle into the instruction table of the SlotIndexes analysis
-  /// numbering this function. 0 if the instruction has never been indexed.
+  /// numbering this function. 0 if the instruction is not indexed.
   unsigned SlotIndexHandle = 0;
 
   /// Internal implementation detail class that provides out-of-line storage for
