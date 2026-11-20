@@ -22,6 +22,12 @@ LLVM_DUMP_METHOD void HWEvents::dump() const { dbgs() << *this << "\n"; }
 
 static HWEvents getExpertSchedulingEventType(const MachineInstr &Inst,
                                              const SIInstrInfo &TII) {
+  if (Inst.isInlineAsm())
+    return HWEvents::VGPR_CSMACC_READ | HWEvents::VGPR_CSMACC_WRITE |
+           HWEvents::VGPR_TRANS_READ | HWEvents::VGPR_TRANS_WRITE |
+           HWEvents::VGPR_DPMACC_READ | HWEvents::VGPR_DPMACC_WRITE |
+           HWEvents::VGPR_XDL_READ | HWEvents::VGPR_XDL_WRITE;
+
   if (TII.isVALU(Inst, /*AllowLDSDMA=*/false)) {
     // Core/Side-, DP-, XDL- and TRANS-MACC VALU instructions complete
     // out-of-order with respect to each other, so each of these classes
