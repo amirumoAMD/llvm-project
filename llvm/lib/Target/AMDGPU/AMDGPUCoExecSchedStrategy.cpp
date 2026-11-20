@@ -3058,7 +3058,28 @@ AMDGPUCoExecSchedStrategy::AMDGPUCoExecSchedStrategy(
 void AMDGPUCoExecSchedStrategy::initPolicy(MachineBasicBlock::iterator Begin,
                                            MachineBasicBlock::iterator End,
                                            unsigned NumRegionInstrs) {
+  // Coexec targets WMMA overlap. Regions without WMMA use default scheduling
+  const SIInstrInfo &SII =
+      *Begin->getMF()->getSubtarget<GCNSubtarget>().getInstrInfo();
+  RegionUsesDefault = true;
+  for (MachineBasicBlock::iterator I = Begin; I != End; ++I) {
+    if (!I->isDebugInstr() &&
+        classifyFlavor(*I, SII) == InstructionFlavor::WMMA) {
+      RegionUsesDefault = false;
+      break;
+    }
+  }
   GCNSchedStrategy::initPolicy(Begin, End, NumRegionInstrs);
+  // Coexec uses GCN trackers. Default regions use the generic ones. Region
+  // recording runs before any stage and must keep them on
+  if (CurrentStage)
+    UseGCNTrackers = !RegionUsesDefault;
+  if (RegionUsesDefault) {
+    // Subtarget forces top-down for coexec functions. Use both directions
+    RegionPolicy.OnlyTopDown = false;
+    RegionPolicy.OnlyBottomUp = false;
+    return;
+  }
   assert((getPreRADirection() == MISched::Unspecified ||
           getPreRADirection() == MISched::TopDown) &&
          "coexec scheduler only supports top-down scheduling");
@@ -3068,6 +3089,10 @@ void AMDGPUCoExecSchedStrategy::initPolicy(MachineBasicBlock::iterator Begin,
 }
 
 void AMDGPUCoExecSchedStrategy::initialize(ScheduleDAGMI *DAG) {
+  if (RegionUsesDefault) {
+    GCNSchedStrategy::initialize(DAG);
+    return;
+  }
   // Coexecution scheduling strategy is only done top-down to support new
   // resource balancing heuristics.
   RegionPolicy.OnlyTopDown = true;
@@ -3086,11 +3111,14 @@ void AMDGPUCoExecSchedStrategy::initialize(ScheduleDAGMI *DAG) {
 }
 
 void AMDGPUCoExecSchedStrategy::schedNode(SUnit *SU, bool IsTopNode) {
-  Heurs.updateForScheduling(SU, &Top);
+  if (!RegionUsesDefault)
+    Heurs.updateForScheduling(SU, &Top);
   GCNSchedStrategy::schedNode(SU, IsTopNode);
 }
 
 SUnit *AMDGPUCoExecSchedStrategy::pickNode(bool &IsTopNode) {
+  if (RegionUsesDefault)
+    return GCNSchedStrategy::pickNode(IsTopNode);
   assert(RegionPolicy.OnlyTopDown && !RegionPolicy.OnlyBottomUp &&
          "coexec scheduler only supports top-down scheduling");
 

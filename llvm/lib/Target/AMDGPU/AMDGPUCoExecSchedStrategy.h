@@ -703,6 +703,8 @@ protected:
                          const RegPressureTracker &RPTracker,
                          SchedCandidate &Cand, bool &PickedPending,
                          bool IsBottomUp);
+  // True when the current region has no WMMA
+  bool RegionUsesDefault = false;
 
 public:
   AMDGPUCoExecSchedStrategy(const MachineSchedContext *C);

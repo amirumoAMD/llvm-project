@@ -30,7 +30,10 @@ static HWEvents getExpertSchedulingEventType(const MachineInstr &Inst,
     if (TII.isXDL(Inst)) {
       // XDL instructions whose VGPR accesses are ordered with respect to
       // Core/Side-MACC VALU for the purposes of va_vdst get their own event.
-      if (AMDGPU::getWMMAIsVAVDSTOrderedXDL(Inst.getOpcode()))
+      // gfx1250-strict hardware does not honor this ordering, so its XDL
+      // instructions use the unordered event.
+      if (AMDGPU::getWMMAIsVAVDSTOrderedXDL(Inst.getOpcode()) &&
+          !TII.getSubtarget().hasGFX1250_STRICT())
         return HWEvents::VGPR_XDL_ORDERED_READ |
                HWEvents::VGPR_XDL_ORDERED_WRITE;
       return HWEvents::VGPR_XDL_READ | HWEvents::VGPR_XDL_WRITE;
