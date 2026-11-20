@@ -395,7 +395,9 @@ class raw_ostream;
 
     /// Returns true if the given machine instr is mapped to an index,
     /// otherwise returns false.
-    bool hasIndex(const MachineInstr &instr) const { return getMIEntry(instr); }
+    bool hasIndex(const MachineInstr &instr) const {
+      return instr.getSlotIndexHandle() != 0;
+    }
 
     /// Returns the base index for the given instruction.
     SlotIndex getInstructionIndex(const MachineInstr &MI,
