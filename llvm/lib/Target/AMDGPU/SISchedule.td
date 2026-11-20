@@ -496,9 +496,12 @@ def WriteWMMAScaleStrict_16X16X128_F8F6F4 : SchedWriteVariant<[
 // F8F6F4 WMMA: both F4 = 4 cycles (1-pass), any F6/F8 = 8 cycles (2-pass).
 // Routes through the scaled variants (ReleaseAtCycles - 1) so the next
 // scaled WMMA can issue at the previous WMMA's IS slot without stalling.
+// gfx1250-strict: both-F4 is scheduled as 4 cycles too. Scheduling it as 8
+// produced wrong results on A0. GCNHazardRecognizer still applies the
+// 8-cycle WMMA hazard requirements.
 def WriteWMMAScale_16X16X128_F8F6F4 : SchedWriteVariant<[
-    SchedVar<PredIsGFX1250Strict,     [WriteWMMAScaleStrict_16X16X128_F8F6F4]>,
     SchedVar<PredIsBothF4_WMMA_SCALE, [WriteXDL1PassScaledWMMA]>,
+    SchedVar<PredIsGFX1250Strict,     [WriteWMMAScaleStrict_16X16X128_F8F6F4]>,
     SchedVar<NoSchedPred,             [WriteXDL2PassScaledWMMA]>
 ]>;
 

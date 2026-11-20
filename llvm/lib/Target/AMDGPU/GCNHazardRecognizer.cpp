@@ -2925,7 +2925,9 @@ static unsigned getWMMAHazardInstInCategory(const MachineInstr &MI,
     // Dense 4-cycle WMMA (gfx1250 16x16x64 FP8/BF8 and f8f6f4 with both
     // inputs F4). One co-execution slot; there is no 4-cycle SWMMAC.
     assert(!IsSWMMAC && "no 4-cycle SWMMAC expected");
-    Category = 6;
+    // gfx1250-strict schedules both-F4 f8f6f4 as 4 cycles but executes it in
+    // 8, so it needs the latency 8 requirements.
+    Category = ST.hasGFX1250_STRICT() ? 0 : 6;
     break;
   case 8:
     Category = IsSWMMAC ? 2 : 0;
@@ -3014,6 +3016,16 @@ bool GCNHazardRecognizer::hasWMMAToVALURegOverlap(
   const MachineOperand *Src2 = TII.getNamedOperand(WMMA, AMDGPU::OpName::src2);
   if (Src2->isReg())
     WMMARegs.push_back(Src2->getReg());
+
+  // Track scale operands for gfx1250-strict WMMA overlap hazards.
+  if (ST.hasGFX1250_STRICT()) {
+    for (AMDGPU::OpName Name :
+         {AMDGPU::OpName::scale_src0, AMDGPU::OpName::scale_src1}) {
+      const MachineOperand *Scale = TII.getNamedOperand(WMMA, Name);
+      if (Scale && Scale->isReg())
+        WMMARegs.push_back(Scale->getReg());
+    }
+  }
 
   for (const MachineOperand &ValuDef : MI.defs()) {
     Register VDstReg = ValuDef.getReg();
